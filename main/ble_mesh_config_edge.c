@@ -28,6 +28,8 @@ df_path_t df_paths[MAX_DF_ENTRIES];
 bool edge_prefer_flooding = false;
 int edge_df_fail_count = 0;
 
+char current_send_mode[12] = "flooding";
+
 uint64_t last_send_timestamp = 0;
 
 enum State nodeState = DISCONNECTED;
@@ -647,8 +649,10 @@ void send_message(uint16_t dst_address, uint16_t length, uint8_t *data_ptr, bool
     // switch to Flooding mode
     if (!edge_prefer_flooding) {
         ctx.send_tag |= ESP_BLE_MESH_TAG_USE_DIRECTED;
+        strcpy(current_send_mode, "df");
         ESP_LOGI(TAG, "[EDGE] Send using DIRECTED FORWARDING");
     } else {
+        strcpy(current_send_mode, "flooding");
         ESP_LOGW(TAG, "[EDGE] Send using FLOODING fallback");
     }
     

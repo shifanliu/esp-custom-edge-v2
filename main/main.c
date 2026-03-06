@@ -13,6 +13,8 @@
 uint16_t node_own_addr = 0;
 extern df_path_t df_paths[MAX_DF_ENTRIES];
 
+extern char current_send_mode[12];
+
 /***************** Event Handler *****************/
 // prov_complete_handler() get triger when a new node is provitioned to the network
 static void prov_complete_handler(uint16_t node_index, const esp_ble_mesh_octet16_t uuid, uint16_t addr, uint8_t element_num, uint16_t net_idx) {
@@ -100,7 +102,8 @@ static void recv_response_handler(esp_ble_mesh_msg_ctx_t *ctx, uint16_t length, 
             char logbuf[256];
         double rtt_ms = rtt / 1000.0;
         snprintf(logbuf, sizeof(logbuf),
-                "{\"src\":\"edge\",\"type\":\"rtt\",\"rtt_ms\":%.3f}",
+                "{\"src\":\"edge\",\"type\":\"rtt\",\"mode\":\"%s\",\"rtt_ms\":%.3f}",
+                current_send_mode,
                 rtt_ms);
         edge_uart_send_json_line(logbuf);
 
