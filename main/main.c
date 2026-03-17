@@ -101,9 +101,23 @@ static void recv_response_handler(esp_ble_mesh_msg_ctx_t *ctx, uint16_t length, 
         ESP_LOGI(TAG_M, "[EDGE] RTT = %" PRIu64 " us", rtt);
             char logbuf[256];
         double rtt_ms = rtt / 1000.0;
+        
+        char actual_mode[12];
+        if(length > 0){
+            if(msg_ptr[0] == 'D'){
+                strcpy(actual_mode, "df");
+                ESP_LOGI(TAG_M, "[EDGE] DF");
+            }else{
+                strcpy(actual_mode, "fl");
+                ESP_LOGI(TAG_M, "[EDGE] FL");
+            }
+        }else{
+            strcpy(actual_mode, "unknown");
+        }
+
         snprintf(logbuf, sizeof(logbuf),
                 "{\"src\":\"edge\",\"type\":\"rtt\",\"mode\":\"%s\",\"rtt_ms\":%.3f}",
-                current_send_mode,
+                actual_mode,
                 rtt_ms);
         edge_uart_send_json_line(logbuf);
 
