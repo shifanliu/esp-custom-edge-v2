@@ -5,6 +5,7 @@
 #include <inttypes.h>
 
 #include "board.h"
+#include "esp_timer.h"
 #include "ble_mesh_config_edge.h"
 #include "../Secret/NetworkConfig.h"
 
@@ -13,10 +14,21 @@
 #if CONFIG_BLE_MESH_RPR_SRV
 #include "esp_ble_mesh_rpr_model_api.h"
 #endif
+#include <esp_ble_mesh_df_model_api.h>
 
 #define TAG TAG_EDGE
 #define TAG_W "Debug"
 #define TAG_INFO "Net_Info"
+#define DF_FAIL_THRESHOLD 3
+
+#include "esp_bt.h"
+
+int df_path_count = 0;
+df_path_t df_paths[MAX_DF_ENTRIES];
+bool edge_prefer_flooding = false;
+int edge_df_fail_count = 0;
+
+uint64_t last_send_timestamp = 0;
 
 enum State nodeState = DISCONNECTED;
 esp_timer_handle_t periodic_timer;
@@ -72,11 +84,41 @@ static esp_ble_mesh_cfg_srv_t config_server = {
     .relay_retransmit = ESP_BLE_MESH_TRANSMIT(2, 20),
 };
 
+#if CONFIG_BLE_MESH_DF_SRV
+static esp_ble_mesh_df_srv_t directed_forwarding_server = {
+    .directed_net_transmit = ESP_BLE_MESH_TRANSMIT(1, 100),
+    .directed_relay_retransmit = ESP_BLE_MESH_TRANSMIT(2, 100),
+    .default_rssi_threshold = (-90),
+    .rssi_margin = 0,
+    .directed_node_paths = 20,
+    .directed_relay_paths = 20,
+#if defined(CONFIG_BLE_MESH_GATT_PROXY_SERVER)
+    .directed_proxy_paths = 20,
+#else
+    .directed_proxy_paths = 0,
+#endif
+#if defined(CONFIG_BLE_MESH_FRIEND)
+    .directed_friend_paths = 20,
+#else
+    .directed_friend_paths = 0,
+#endif
+    .path_monitor_interval = 120,
+    .path_disc_retry_interval = 300,
+    .path_disc_interval = ESP_BLE_MESH_PATH_DISC_INTERVAL_30_SEC,
+    .lane_disc_guard_interval = ESP_BLE_MESH_LANE_DISC_GUARD_INTERVAL_10_SEC,
+    .directed_ctl_net_transmit = ESP_BLE_MESH_TRANSMIT(1, 100),
+    .directed_ctl_relay_retransmit = ESP_BLE_MESH_TRANSMIT(2, 100),
+};
+#endif
+
 static esp_ble_mesh_model_t root_models[] = {
 #if CONFIG_BLE_MESH_RPR_SRV
     ESP_BLE_MESH_MODEL_RPR_SRV(NULL),
 #endif
     ESP_BLE_MESH_MODEL_CFG_SRV(&config_server),
+#if CONFIG_BLE_MESH_DF_SRV
+    ESP_BLE_MESH_MODEL_DF_SRV(&directed_forwarding_server),
+#endif
 };
 
 static const esp_ble_mesh_client_op_pair_t client_op_pair[] = {
@@ -307,6 +349,8 @@ static void ble_mesh_custom_model_cb(esp_ble_mesh_model_cb_event_t event, esp_bl
 
     switch (event) {
     case ESP_BLE_MESH_MODEL_OPERATION_EVT:
+        // debug1
+        ESP_LOGW(TAG, "EDGE RECEIVED OPCODE: 0x%06" PRIx32, param->model_operation.opcode);
         switch (param->model_operation.opcode) {
             case ECS_193_MODEL_OP_MESSAGE:
             case ECS_193_MODEL_OP_MESSAGE_R:
@@ -354,6 +398,9 @@ static void ble_mesh_custom_model_cb(esp_ble_mesh_model_cb_event_t event, esp_bl
             break;
         }
         // start_time = esp_timer_get_time();
+        edge_df_fail_count = 0;
+        edge_prefer_flooding = false;
+
         ESP_LOGI(TAG, "Send opcode [0x%06" PRIx32 "] completed", param->model_send_comp.opcode);
         setNodeState(CONNECTED);
         break;
@@ -363,11 +410,92 @@ static void ble_mesh_custom_model_cb(esp_ble_mesh_model_cb_event_t event, esp_bl
         break;
     case ESP_BLE_MESH_CLIENT_MODEL_SEND_TIMEOUT_EVT:
         ESP_LOGW(TAG, "Client message 0x%06" PRIx32 " timeout", param->client_send_timeout.opcode);
+        
+        edge_df_fail_count++;
+        ESP_LOGW(TAG, "[DF] timeout count = %d / %d", edge_df_fail_count, DF_FAIL_THRESHOLD);
+        if (edge_df_fail_count >= DF_FAIL_THRESHOLD) {
+            edge_prefer_flooding = true;
+            edge_df_fail_count = 0;
+            ESP_LOGE(TAG,
+                "[DF] Too many DF failures, fallback to FLOODING");
+        }
+        
         timeout_handler_cb(param->client_send_timeout.ctx, param->client_send_timeout.opcode);
         break;
     default:
         break;
     }
+}
+
+void printDfPaths() {
+    ESP_LOGW(TAG, "----------- Direct Forwarding Paths --------------");
+    ESP_LOGI(TAG, "Number of paths: %d", df_path_count);
+    for (int i = 0; i < df_path_count; i++) {
+        ESP_LOGI(TAG, "Path %d: Node = 0x%04x Origin = 0x%04x, Target = 0x%04x", i, df_paths[i].node_addr, df_paths[i].path_origin, df_paths[i].path_target);
+        ESP_LOGI(TAG, "Origin Dependents (%d):", df_paths[i].num_dependents_origin);
+        for(int j = 0; j < df_paths[i].num_dependents_origin; j++) {
+            ESP_LOGI(TAG, "0x%04x", df_paths[i].origin_dependents[j]);
+        }
+        ESP_LOGI(TAG, "Target Dependents (%d):", df_paths[i].num_dependents_target);
+        for(int j = 0; j < df_paths[i].num_dependents_target; j++) {
+            ESP_LOGI(TAG, "0x%04x", df_paths[i].target_dependents[j]);
+        }
+    }
+    ESP_LOGW(TAG, "----------- End of Direct Forwarding Paths --------------");
+}
+
+static void ble_mesh_df_server_cb(esp_ble_mesh_df_server_cb_event_t event, esp_ble_mesh_df_server_cb_param_t *param) {
+    esp_ble_mesh_df_server_table_change_t change = {0};
+    esp_ble_mesh_uar_t path_origin;
+    esp_ble_mesh_uar_t path_target;
+
+    if (event == ESP_BLE_MESH_DF_SERVER_TABLE_CHANGE_EVT) {
+        memcpy(&change, &param->value.table_change, sizeof(esp_ble_mesh_df_server_table_change_t));
+
+        switch (change.action) {
+            case ESP_BLE_MESH_DF_TABLE_ADD: {
+                memcpy(&path_origin, &change.df_table_info.df_table_entry_add_remove.path_origin, sizeof(path_origin));
+                memcpy(&path_target, &change.df_table_info.df_table_entry_add_remove.path_target, sizeof(path_target));
+                ESP_LOGI(TAG, "Established a path from 0x%04x to 0x%04x", path_origin.range_start, path_target.range_start);
+
+                if (df_path_count < MAX_DF_ENTRIES) {
+                    df_paths[df_path_count].node_addr = esp_ble_mesh_get_primary_element_address();
+                    df_paths[df_path_count].path_origin = path_origin.range_start;
+                    df_paths[df_path_count].path_target = path_target.range_start;                    
+                    memcpy(&df_paths[df_path_count].origin_dependents, &change.df_table_info.df_table_entry_add_remove.dep_origin_data, sizeof(esp_ble_mesh_uar_t) * change.df_table_info.df_table_entry_add_remove.dep_origin_num);
+                    df_paths[df_path_count].num_dependents_origin = change.df_table_info.df_table_entry_add_remove.dep_origin_num;
+                    memcpy(&df_paths[df_path_count].target_dependents, &change.df_table_info.df_table_entry_add_remove.dep_target_data, sizeof(esp_ble_mesh_uar_t) * change.df_table_info.df_table_entry_add_remove.dep_target_num);
+                    df_paths[df_path_count].num_dependents_target = change.df_table_info.df_table_entry_add_remove.dep_target_num;
+                    df_path_count++;
+                    ESP_LOGI(TAG, "Stored DF Path: 0x%04x -> 0x%04x", path_origin.range_start, path_target.range_start);
+                } else {
+                    ESP_LOGW(TAG, "DF Table is full! Cannot store more paths.");
+                }
+            }
+                break;
+            case ESP_BLE_MESH_DF_TABLE_REMOVE: {
+                memcpy(&path_origin, &change.df_table_info.df_table_entry_add_remove.path_origin, sizeof(path_origin));
+                memcpy(&path_target, &change.df_table_info.df_table_entry_add_remove.path_target, sizeof(path_target));
+                ESP_LOGI(TAG, "Remove a path from 0x%04x to 0x%04x", path_origin.range_start, path_target.range_start);
+
+                for (int i = 0; i < df_path_count; i++) {
+                    if (df_paths[i].path_origin == path_origin.range_start && df_paths[i].path_target == path_target.range_start) {
+                        // Shift remaining paths to fill the gap
+                        for (int j = i; j < df_path_count - 1; j++) {
+                            df_paths[j] = df_paths[j + 1];
+                        }
+                        df_path_count--;
+                        break;
+                    }
+                }
+            }
+                break;
+            default:
+                ESP_LOGW(TAG, "Unknown action %d", change.action);
+        }
+    }
+    printDfPaths();
+    return;
 }
 
 // ========================= Remote Provisioning Status Printing function ==================================
@@ -498,6 +626,10 @@ void set_message_ttl(uint8_t new_ttl) {
 
 void send_message(uint16_t dst_address, uint16_t length, uint8_t *data_ptr, bool require_response)
 {
+    extern uint64_t last_send_timestamp;
+    last_send_timestamp = esp_timer_get_time();
+    ESP_LOGI(TAG, "[EDGE] Message send_time = %" PRIu64 " us", last_send_timestamp);
+
     esp_ble_mesh_msg_ctx_t ctx = {0};
     uint32_t opcode = ECS_193_MODEL_OP_MESSAGE;
     esp_ble_mesh_dev_role_t message_role = MSG_ROLE;
@@ -511,6 +643,14 @@ void send_message(uint16_t dst_address, uint16_t length, uint8_t *data_ptr, bool
     ctx.app_idx = ble_mesh_key.app_idx;
     ctx.addr = dst_address;
     ctx.send_ttl = ble_message_ttl;
+    // Try Directed-Forwarding mode first, if it fails to receive ACK 3 times,
+    // switch to Flooding mode
+    if (!edge_prefer_flooding) {
+        ctx.send_tag |= ESP_BLE_MESH_TAG_USE_DIRECTED;
+        ESP_LOGI(TAG, "[EDGE] Send using DIRECTED FORWARDING");
+    } else {
+        ESP_LOGW(TAG, "[EDGE] Send using FLOODING fallback");
+    }
     
     if (require_response) {
         opcode = ECS_193_MODEL_OP_MESSAGE_R;
@@ -745,6 +885,11 @@ void send_connectivity_wrapper(void *arg) {
     send_connectivity(PROV_OWN_ADDR, strlen(connectivity_msg), (uint8_t *) connectivity_msg);
 }
 
+void send_gps_data(uint16_t dst_address, gps_data_t *gps) {
+    send_message(dst_address, sizeof(gps_data_t),
+                 (uint8_t *)gps, true);
+}
+
 void loop_message_connection() {
     ESP_LOGI(TAG, "----- LOOP MESSAGE STARTED -----\n");
     periodic_timer_start = true;
@@ -793,6 +938,8 @@ static esp_err_t ble_mesh_init(void)
     esp_ble_mesh_register_config_server_callback(example_ble_mesh_config_server_cb);
     esp_ble_mesh_register_custom_model_callback(ble_mesh_custom_model_cb);
     esp_ble_mesh_register_rpr_server_callback(example_remote_prov_server_callback);
+    //esp_ble_mesh_register_df_client_callback(ble_mesh_directed_forwarding_client_cb);
+    esp_ble_mesh_register_df_server_callback(ble_mesh_df_server_cb);
 
     err = esp_ble_mesh_init(&provision, &composition);
     if (err != ESP_OK) {
@@ -809,6 +956,12 @@ static esp_err_t ble_mesh_init(void)
     err = esp_ble_mesh_node_prov_enable(ESP_BLE_MESH_PROV_ADV | ESP_BLE_MESH_PROV_GATT);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to enable mesh node");
+        return err;
+    }
+
+    err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
+    if(err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set BLE TX power");
         return err;
     }
 

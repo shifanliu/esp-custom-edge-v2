@@ -17,6 +17,47 @@
 #ifndef _BLE_EDGE_H_
 #define _BLE_EDGE_H_
 
+#pragma once
+
+#include <stdbool.h>
+
+extern bool edge_prefer_flooding;
+extern int edge_df_fail_count;
+
+typedef struct {
+    uint16_t node_addr;
+    uint16_t path_origin;
+    uint16_t path_target;
+    uint16_t origin_dependents[10]; //TODO: The size of this should be tied to directed relay paths in config
+    uint16_t num_dependents_origin;
+    uint16_t target_dependents[10]; //TODO: The size of this should be tied to directed relay paths in config
+    uint16_t num_dependents_target;
+} __attribute__((packed)) df_path_t;
+
+// typedef struct {
+//     int32_t latitude;       
+//     int32_t longitude;      
+//     int32_t utc_time;       
+//     uint8_t gps_flag;       
+//     uint16_t num_satellites;
+//     uint8_t button_state;   
+// } __attribute__((packed)) gps_data_t;
+typedef struct gps_data {
+    char     gps_time[32]; // Unix timestamp or seconds
+    int32_t  fixType;
+    int32_t  gnssFixOK;    // 0=unhealthy, 1=healthy
+    int32_t  diffSoln;
+    int32_t  numSV;        // number of satellites
+    int32_t  lat;          // 32-bit signed, scaled by 1e7 if needed
+    int32_t  lon;          // 32-bit signed, scaled by 1e7 if needed
+    uint8_t  button_state; // 0=not pressed, 1=pressed
+} __attribute__((packed)) gps_data_t;
+
+#define MAX_DF_ENTRIES 10
+extern df_path_t df_paths[MAX_DF_ENTRIES];
+extern int df_path_count;
+extern uint64_t last_send_timestamp;
+
 /**
  * @brief Loop message connection for handling incoming and outgoing messages.
  */
@@ -60,6 +101,19 @@ void set_message_ttl(uint8_t new_ttl);
  * @param require_response flag that indicate if this message expecting response, timeout will get triger if response not recived
  */
 void send_message(uint16_t dst_address, uint16_t length, uint8_t *data_ptr, bool require_response);
+
+/**
+ * @brief Send GPS data to another node in the network
+ *
+ * This function packages a gps_data_t structure and sends it
+ * to the specified destination node over the BLE Mesh network.
+ *
+ * @param dst_address  Destination node's unicast address
+ * @param gps Pointer to gps_data_t structure containing latitude,
+ *            longitude, UTC time, GPS flag, number of satellites,
+ *            and button state
+ */
+void send_gps_data(uint16_t dst_address, gps_data_t *gps);
 
 /**
  * @brief Broadcast Message (bytes) to all node in network

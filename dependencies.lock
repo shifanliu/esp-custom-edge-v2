@@ -1,33 +1,63 @@
 dependencies:
   button:
-    component_hash: null
+    dependencies: []
     source:
-      path: C:\Users\hongh\esp\v5.2\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\button
+      path: D:\users\esp\v5.5\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\button
       type: local
     version: '*'
-  example_init:
-    component_hash: null
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
     source:
-      path: C:\Users\hongh\esp\v5.2\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\example_init
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.5.3
+  espressif/lightbulb_driver:
+    component_hash: 8ee3d1cc816bddbc21ee05d33b05249c04a6baa1968e4edb84a5c3c93c9afab3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3.2'
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.5.5
+  example_init:
+    dependencies: []
+    source:
+      path: D:\users\esp\v5.5\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\example_init
       type: local
     version: '*'
   example_nvs:
-    component_hash: null
+    dependencies: []
     source:
-      path: C:\Users\hongh\esp\v5.2\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\example_nvs
+      path: D:\users\esp\v5.5\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\example_nvs
       type: local
     version: '*'
   idf:
-    component_hash: null
     source:
       type: idf
-    version: 5.2.0
+    version: 5.5.0
   light_driver:
-    component_hash: null
+    dependencies:
+    - name: espressif/lightbulb_driver
+      version: ==0.5.5
     source:
-      path: C:\Users\hongh\esp\v5.2\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\light_driver
+      path: D:\users\esp\v5.5\esp-idf\examples\bluetooth\esp_ble_mesh\common_components\light_driver
       type: local
     version: '*'
-manifest_hash: be16936c8fcbd26574c0282ebd04512d8255614b3787d736be2162b2753baba5
+direct_dependencies:
+- button
+- example_init
+- example_nvs
+- light_driver
+manifest_hash: a0ad9f76787e21f20afa3750f9bcf9a13e49f3faa9cf457095c96377de50865b
 target: esp32h2
-version: 1.0.0
+version: 2.0.0

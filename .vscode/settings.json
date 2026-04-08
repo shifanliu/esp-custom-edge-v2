@@ -9,9 +9,13 @@
     "random": "c",
     "ble_mesh_config_root.h": "c",
     "iot_button.h": "c",
-    "esp_ble_mesh_rpr_model_api.h": "c"
+    "esp_ble_mesh_rpr_model_api.h": "c",
+    "networkconfig.h": "c"
   },
-  "idf.portWin": "COM22",
+  "idf.portWin": "COM11",
   "idf.flashType": "UART",
-  "idf.port": "/dev/ttyUSB0"
+  "idf.port": "/dev/tty.usbserial-1410",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32h2"
+  }
 }

@@ -12,7 +12,7 @@
 
 #include "driver/uart.h"
 #include "driver/gpio.h"
-#include "led_strip_encoder.h"
+//#include "led_strip_encoder.h" TODO: Find migrated extension or find a new library
 #include <arpa/inet.h>
 #include "../Secret/NetworkConfig.h"
 
@@ -22,8 +22,8 @@
 // #define RX_PIN_H2 23 // dpin connected with usb-uart
 
 #define UART_NUM_H2 UART_NUM_1 // UART_NUM_0 is used for usb monitor already
-#define TX_PIN_H2 0 // we can define any gpio pin
-#define RX_PIN_H2 1 // we can define any gpio pin
+#define TX_PIN_H2 GPIO_NUM_4
+#define RX_PIN_H2 GPIO_NUM_5
 
 #define UART_NUM    UART_NUM_H2
 #define TXD_PIN     TX_PIN_H2
@@ -151,6 +151,13 @@ int uart_sendData(uint16_t node_addr, uint8_t* data, size_t length);
  * @return Status of the send operation.
  */
 int uart_sendMsg(uint16_t node_addr, char* msg);
+
+/**
+ * @brief Send a message to the root node after provisioning
+ */
+void initialDummySend();
+
+void edge_uart_send_json_line(const char *json_line);
 
 #if defined(CONFIG_BLE_MESH_ESP32H2_DEV)
 #define LED_R GPIO_NUM_8

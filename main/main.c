@@ -11,6 +11,7 @@
 #define CMD_RESET_EDGE "RST-E"
 
 uint16_t node_own_addr = 0;
+extern df_path_t df_paths[MAX_DF_ENTRIES];
 
 /***************** Event Handler *****************/
 // prov_complete_handler() get triger when a new node is provitioned to the network
@@ -28,6 +29,7 @@ static void config_complete_handler(uint16_t addr) {
     #if HEARTBEAT_TIMER
         loop_message_connection();
     #endif
+    initialDummySend();
     uart_sendMsg(0, "[E] Module Configured");
 }
 
@@ -38,6 +40,28 @@ static void recv_message_handler(esp_ble_mesh_msg_ctx_t *ctx, uint16_t length, u
     ESP_LOGW(TAG_M, "-> Received Message \'%*s\' from node-%d", length, (char *)msg_ptr, node_addr);
     setTimeout(false); // clear edge reset timeout
     // stop_timer();
+
+    if(ctx->recv_cred == ESP_BLE_MESH_DIRECTED_CRED) {
+        ESP_LOGI(TAG_M, "Received via Directed");
+    } else {
+        ESP_LOGI(TAG_M, "Received via Flooding");
+    }
+
+    char cntrl_cmd[4];
+    memcpy(&cntrl_cmd, msg_ptr, 4);
+    uint32_t df_request = ECS_193_MODEL_OP_REQUEST_DFT_R;
+    
+    if(strcmp(cntrl_cmd, "DFTR") == 0){
+        ESP_LOGI(TAG_M, "Print");
+        ESP_LOGI(TAG_M, "Received Request DFT");
+        uint8_t dft_data[sizeof(df_path_t) * df_path_count + 4];
+        memcpy(dft_data, &df_request, 4);
+        memcpy(dft_data + 4, df_paths, sizeof(df_path_t) * df_path_count);
+        ESP_LOGI(TAG_M, "Print 2");
+        ESP_LOGI(TAG_M, "Path count: %d, Length: %d", df_path_count, sizeof(dft_data));
+        send_message(ctx->addr, sizeof(dft_data), dft_data, false);
+        return;
+    }
 
     // recived a ble-message from edge ndoe
     uart_sendData(node_addr, msg_ptr, length);
@@ -63,6 +87,26 @@ static void recv_message_handler(esp_ble_mesh_msg_ctx_t *ctx, uint16_t length, u
 
 // recv_response_handler() get triger when module recived an response to previouse sent message that requires an response
 static void recv_response_handler(esp_ble_mesh_msg_ctx_t *ctx, uint16_t length, uint8_t *msg_ptr, uint32_t opcode) {
+    // Detect ACK from Root
+    if (opcode == ECS_193_MODEL_OP_RESPONSE) {
+        uint64_t t_recv_ack = esp_timer_get_time();
+
+        ESP_LOGI(TAG_M, "[EDGE] Received ACK at time = %" PRIu64 " us", t_recv_ack);
+
+        extern uint64_t last_send_timestamp;
+        uint64_t rtt = t_recv_ack - last_send_timestamp;
+
+        ESP_LOGI(TAG_M, "[EDGE] RTT = %" PRIu64 " us", rtt);
+            char logbuf[256];
+        double rtt_ms = rtt / 1000.0;
+        snprintf(logbuf, sizeof(logbuf),
+                "{\"src\":\"edge\",\"type\":\"rtt\",\"rtt_ms\":%.3f}",
+                rtt_ms);
+        edge_uart_send_json_line(logbuf);
+
+        return;
+    }
+
     // ESP_LOGI(TAG_M, " ----------- recv_response handler trigered -----------");
     ESP_LOGW(TAG_M, "-> Received Response %d bytes [%*s]\n", length , length, (char *)msg_ptr);
 
@@ -109,6 +153,21 @@ static void broadcast_handler(esp_ble_mesh_msg_ctx_t *ctx, uint16_t length, uint
 
     uint16_t node_addr = ctx->addr;
     ESP_LOGE(TAG_M, "-> Received Broadcast Message \'%*s\' from node-%d", length, (char *) msg_ptr, node_addr);
+
+    char cntrl_cmd[4];
+    memcpy(&cntrl_cmd, msg_ptr, 4);
+    uint32_t df_request = ECS_193_MODEL_OP_REQUEST_DFT_R;
+    
+    if(strcmp(cntrl_cmd, "DFTR") == 0){
+        ESP_LOGI(TAG_M, "Received Request DFT");
+        uint8_t dft_data[sizeof(df_path_t) * df_path_count + 4];
+        memcpy(dft_data, &df_request, 4);
+        memcpy(dft_data + 4, df_paths, sizeof(df_path_t) * df_path_count);
+        ESP_LOGI(TAG_M, "Path count: %d, Length: %d", df_path_count, sizeof(dft_data));
+        ESP_LOGI(TAG_M, "informaction: %d", df_paths[0].path_origin);
+        send_message(ctx->addr, sizeof(dft_data), dft_data, false);
+        return;
+    }
 
     // ========== General case, pass up to APP level ==========
     // pass node_addr & data to to edge device using uart
@@ -185,7 +244,8 @@ static void execute_uart_command(char *command, size_t cmd_total_len) {
     else if (strncmp(command, CMD_RESET_EDGE, CMD_LEN) == 0) {
         // restart edge module
         setNodeState(DISCONNECTED);
-        reset_edge();
+        // reset_edge();
+        restart_edge();
     }
     // else if (strncmp(command, "CLEAN", 5) == 0)
     // {
@@ -293,7 +353,7 @@ void app_main(void)
     }
     
     board_init();
-    xTaskCreate(rx_task, "uart_rx_task", 1024 * 2, NULL, configMAX_PRIORITIES - 1, NULL);
+    // xTaskCreate(rx_task, "uart_rx_task", 1024 * 2, NULL, configMAX_PRIORITIES - 1, NULL);
 
     char message[15] = "[E]online\n";
     uart_sendData(0, (uint8_t *)message, strlen(message));
