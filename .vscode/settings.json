@@ -12,7 +12,7 @@
     "esp_ble_mesh_rpr_model_api.h": "c",
     "networkconfig.h": "c"
   },
-  "idf.portWin": "COM6",
+  "idf.portWin": "COM12",
   "idf.flashType": "UART",
   "idf.port": "/dev/tty.usbserial-1410",
   "idf.customExtraVars": {

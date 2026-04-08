@@ -141,10 +141,15 @@ void edge_uart_send_json_line(const char *json_line)
     uart_write_bytes(UART_NUM, "\n", 1);
 }
 
+void send_ping() {
+    uint8_t ping = 'P';
+    send_message(PROV_OWN_ADDR, 1, &ping, true);
+}
+
 static void button_tap_cb(void* arg)
 {
     ESP_LOGW(TAG_W, "button tapped ------------------------- ");
-    
+    send_ping();
     double lat_d = (38.5434667768 - 38.5395022575) * ((double) esp_random() / UINT32_MAX)
                    + 38.5395022575;
     double lon_d = (-121.7786203497 + 121.7716779140) * ((double) esp_random() / UINT32_MAX)
@@ -172,8 +177,8 @@ static void button_tap_cb(void* arg)
 
     gps.button_state = 1; 
 
-    ESP_LOGI(TAG_W, "Button GPS -> time:%s lat:%d lon:%d", gps.gps_time, gps.lat, gps.lon);
-    send_gps_data(PROV_OWN_ADDR, &gps);
+    // ESP_LOGI(TAG_W, "Button GPS -> time:%s lat:%d lon:%d", gps.gps_time, gps.lat, gps.lon);
+    // send_gps_data(PROV_OWN_ADDR, &gps);
     char logbuf[256];
     snprintf(logbuf, sizeof(logbuf),
          "{\"src\":\"edge\",\"type\":\"gps_sent\","
